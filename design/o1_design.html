@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>O1: receptor-competition model for mixture distance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f7f8; --fg: #1d2329; --muted: #4f5962; --line: #c9cfd5; --panel: #ffffff; --band: #eef1f3;
+  --o1: #0f7b6c; --enc: #2a78d6; --rec: #b5560b;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif; --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111417; --fg: #f2f4f6; --muted: #b9c2ca; --line: #4a545d; --panel: #1b2026; --band: #232a31;
+    --o1: #3cc4ae; --enc: #3987e5; --rec: #f0954a; --s1: #3987e5; --s2: #d95926; --s3: #199e70; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-body); }
+main { max-width: 1180px; margin: 0 auto; padding: 32px 20px 48px; display: grid; gap: 30px; }
+h1 { font-size: 26px; margin: 0; }
+h2 { font-size: 17px; margin: 0 0 10px; }
+p { margin: 0 0 8px; max-width: 80ch; }
+.lead { color: var(--muted); }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
+figure svg { display: block; width: 100%; height: auto; color: var(--fg); }
+figcaption { margin-top: 10px; color: var(--muted); font-size: 13px; max-width: 95ch; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+.card h3 { font-size: 15px; margin: 0 0 6px; }
+.card p { font-size: 14px; margin: 0 0 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+tr.o1 td { background: var(--band); }
+tr.o1 td:first-child { color: var(--o1); font-weight: 600; }
+.tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px; overflow-x: auto; }
+.k { display:inline-block; padding:0 6px; border-radius:4px; font-size:12px; font-weight:600; border:1.5px solid; white-space:nowrap; }
+.k.fz { color: var(--enc); border-color: var(--enc); } .k.ln { color: var(--rec); border-color: var(--rec); } .k.cp { color: var(--o1); border-color: var(--o1); } .k.in { color: var(--muted); border-color: var(--line); }
+.legend { display:flex; flex-wrap:wrap; gap:16px; font-size:13px; margin:0 0 10px; }
+.step h3 { font-size: 15px; margin: 0 0 8px; }
+table.kv td { border-bottom: 1px solid var(--line); padding: 6px 8px; font-size: 14px; }
+table.kv td:first-child { width: 150px; color: var(--muted); font-weight: 600; }
+td.eqn { font-size: 14px; background: var(--band); }
+code, .m { font-family: var(--font-mono); font-size: 13px; }
+.note { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.y { color: var(--o1); font-weight: 600; } .n { color: var(--rec); font-weight: 600; }
+.chartrow { display: grid; grid-template-columns: minmax(320px, 560px) 1fr; gap: 18px; align-items: start; }
+@media (max-width: 800px) { .chartrow { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>O1: receptor-competition model for mixture distance</h1>
+    <p class="lead">Each molecule is mapped to how strongly it binds and activates a set of latent receptors. The molecules of a mixture compete for those receptors, and two mixtures are compared by their receptor patterns. The encoder can be open-POM or MIST: both give a per-molecule vector, and the rest of O1 is the same.</p>
+    <p class="lead"><a href="#o10">O1.0</a>, the first and simplest step, is drawn in its own section below.</p>
+  </header>
+
+  <section>
+    <h2>Hidden layer: definition</h2>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td style="width:220px"><b>What it is</b></td><td>A layer of R latent receptors (R = 64 to start). It sits between the per-molecule encoder and the distance.</td></tr>
+          <tr><td><b>Per molecule m, receptor j</b></td><td>binding <span class="m">x(m, j) = softplus(W_x h(m) + b_x)_j ≥ 0</span> (how strongly m binds j at its concentration) and efficacy <span class="m">e(m, j) = sigmoid(W_e h(m) + b_e)_j ∈ [0,1]</span> (how strongly m activates j once bound). h(m) is the frozen encoder vector (open-POM 256 numbers or MIST 512).</td></tr>
+          <tr><td><b>Hidden state of a mixture A</b></td><td><span class="m">r_j(A) = Σ_(m∈A) x(m, j)·e(m, j) / (1 + Σ_(m∈A) x(m, j))</span>, j = 1…R, so r(A) ∈ [0,1)^R. For a single molecule m: r_j = x(m, j)·e(m, j) / (1 + x(m, j)).</td></tr>
+          <tr><td><b>Hill form (PLAN.md)</b></td><td>The binding is written <span class="m">x(m, j) = (c(m) / K(m, j))^n(j)</span>, with c(m) the concentration of m, K(m, j) the binding constant and n(j) the Hill coefficient of receptor j; this is the x(m, j) used above. One molecule alone gives <span class="m">r_j = e·c^n / (c^n + K^n)</span>, the Hill S-curve of Intensity '25 (Imax ↔ e, EC50 ↔ K). With more molecules, the shared denominator adds competition. <b>Caveat:</b> DREAM 2 gives no concentrations (the mixtures are intensity-matched), so c, K and n collapse into one number per molecule and receptor, and n cannot be learned from DREAM 2 alone. Fix n = 1 there; learn n only with concentration data (e.g. Intensity '25).</td></tr>
+          <tr><td><b>What shapes it</b> (no receptor data)</td><td>① the competitive-binding form itself; ② the distance loss on mixture pairs; ③ an odour-word readout <span class="m">sigmoid(U r)</span> trained on 4,983 single molecules; ④ L1 on x, so each molecule drives few receptors; ⑤ optional: M2OR receptor labels on some units.</td></tr>
+          <tr><td><b>What it is not</b></td><td>Not a free embedding: POMMix's mixture vector (96-d attention output) has no physical form, and D2Smell has no hidden layer (pair features go into trees). The units are <i>receptor-like</i>; they are not identified with real receptors unless M2OR supervision works.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Hidden layer: how it works</h2>
+    <div class="tablewrap" style="margin-bottom:14px">
+      <table>
+        <tbody>
+          <tr><td style="width:190px"><span class="k in">given (input)</span></td><td>Two <b>mixtures</b> A and B, each a set of molecules (SMILES), e.g. A = {m1, m2}, B = {m3}. No concentrations (the mixtures are intensity-matched).</td></tr>
+          <tr><td><span class="k in">target (output)</span></td><td><b>d(A, B)</b> in [0, 1]: the human perceptual distance between the two mixtures. Training labels: the 820 DREAM 2 training pairs only (Bushdid, Snitz 1/2, Ravia 1/2/4/5/6, Metamer). No D2Smell augmentation and no extra POMMix pairs.</td></tr>
+          <tr><td><span class="k in">also given in training</span></td><td>Odour words of 4,983 single molecules (GS-LF), used only by the readout loss.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 style="font-size:15px;margin:6px 0 8px">Network map (illustration)</h3>
+    <div class="legend"><span><span class="k fz">frozen</span> pretrained, not trained here</span><span><span class="k ln">learned</span> weights trained on our data</span><span><span class="k cp">computed</span> fixed formula, no weights of its own</span><span><span class="k in">input</span> data</span></div>
+    <figure>
+      <svg viewBox="0 0 1140 430" role="img" aria-label="Network map. Mixture A contains molecules m1 and m2; mixture B contains m3. Each molecule goes through the encoder to a vector h, then the heads give binding x and efficacy e for every receptor. In the receptor layer, mixture A molecules feed receptors R1 to R3 of copy A and give pattern r(A); mixture B feeds copy B and gives r(B). The distance compares r(A) and r(B)." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="12" fill="currentColor">
+        <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+        <text x="75" y="20" text-anchor="middle" font-weight="600" fill="var(--muted)">INPUT</text>
+        <text x="260" y="20" text-anchor="middle" font-weight="600" fill="var(--muted)">[1] encoder</text>
+        <text x="445" y="20" text-anchor="middle" font-weight="600" fill="var(--muted)">[2] heads</text>
+        <text x="660" y="20" text-anchor="middle" font-weight="600" fill="var(--muted)">[3] receptor layer</text>
+        <text x="835" y="20" text-anchor="middle" font-weight="600" fill="var(--muted)">hidden state</text>
+        <text x="1010" y="20" text-anchor="middle" font-weight="600" fill="var(--muted)">[4] distance</text>
+        <rect x="10" y="38" width="130" height="172" rx="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="22" y="58" font-weight="600">mixture A</text>
+        <rect x="10" y="250" width="130" height="110" rx="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="22" y="270" font-weight="600">mixture B</text>
+        <circle cx="75" cy="95" r="20" fill="var(--enc)" fill-opacity=".15" stroke="var(--enc)" stroke-width="1.5"/><text x="75" y="99" text-anchor="middle" font-weight="600">m1</text>
+        <rect x="200" y="78" width="120" height="34" rx="6" fill="var(--enc)" fill-opacity=".10" stroke="var(--enc)"/><text x="260" y="99" text-anchor="middle" font-family="IBM Plex Mono, monospace">h(m1)</text>
+        <rect x="370" y="78" width="150" height="34" rx="6" fill="var(--rec)" fill-opacity=".10" stroke="var(--rec)"/><text x="445" y="99" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5"><tspan fill="var(--rec)" font-weight="700">W_x, W_e</tspan> → <tspan fill="var(--o1)" font-weight="600">x, e</tspan></text>
+        <line x1="95" y1="95" x2="198" y2="95" stroke="currentColor" marker-end="url(#ar2)"/>
+        <line x1="320" y1="95" x2="368" y2="95" stroke="currentColor" marker-end="url(#ar2)"/>
+        <circle cx="75" cy="165" r="20" fill="var(--enc)" fill-opacity=".15" stroke="var(--enc)" stroke-width="1.5"/><text x="75" y="169" text-anchor="middle" font-weight="600">m2</text>
+        <rect x="200" y="148" width="120" height="34" rx="6" fill="var(--enc)" fill-opacity=".10" stroke="var(--enc)"/><text x="260" y="169" text-anchor="middle" font-family="IBM Plex Mono, monospace">h(m2)</text>
+        <rect x="370" y="148" width="150" height="34" rx="6" fill="var(--rec)" fill-opacity=".10" stroke="var(--rec)"/><text x="445" y="169" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5"><tspan fill="var(--rec)" font-weight="700">W_x, W_e</tspan> → <tspan fill="var(--o1)" font-weight="600">x, e</tspan></text>
+        <line x1="95" y1="165" x2="198" y2="165" stroke="currentColor" marker-end="url(#ar2)"/>
+        <line x1="320" y1="165" x2="368" y2="165" stroke="currentColor" marker-end="url(#ar2)"/>
+        <circle cx="75" cy="315" r="20" fill="var(--enc)" fill-opacity=".15" stroke="var(--enc)" stroke-width="1.5"/><text x="75" y="319" text-anchor="middle" font-weight="600">m3</text>
+        <rect x="200" y="298" width="120" height="34" rx="6" fill="var(--enc)" fill-opacity=".10" stroke="var(--enc)"/><text x="260" y="319" text-anchor="middle" font-family="IBM Plex Mono, monospace">h(m3)</text>
+        <rect x="370" y="298" width="150" height="34" rx="6" fill="var(--rec)" fill-opacity=".10" stroke="var(--rec)"/><text x="445" y="319" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5"><tspan fill="var(--rec)" font-weight="700">W_x, W_e</tspan> → <tspan fill="var(--o1)" font-weight="600">x, e</tspan></text>
+        <line x1="95" y1="315" x2="198" y2="315" stroke="currentColor" marker-end="url(#ar2)"/>
+        <line x1="320" y1="315" x2="368" y2="315" stroke="currentColor" marker-end="url(#ar2)"/>
+        <rect x="600" y="44" width="120" height="152" rx="10" fill="var(--o1)" fill-opacity=".06" stroke="var(--o1)" stroke-dasharray="4 3"/>
+        <rect x="600" y="258" width="120" height="116" rx="10" fill="var(--o1)" fill-opacity=".06" stroke="var(--o1)" stroke-dasharray="4 3"/>
+        <line x1="520" y1="95" x2="626" y2="70" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="165" x2="626" y2="70" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="95" x2="626" y2="120" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="165" x2="626" y2="120" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="95" x2="626" y2="170" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="165" x2="626" y2="170" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="315" x2="626" y2="280" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="315" x2="626" y2="315" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="520" y1="315" x2="626" y2="350" stroke="var(--o1)" stroke-opacity=".55"/>
+        <circle cx="640" cy="70" r="15" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="640" y="74" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">R1</text>
+        <line x1="655" y1="70" x2="790" y2="70" stroke="var(--o1)" stroke-opacity=".7"/>
+        <text x="668" y="66" font-size="11" font-family="IBM Plex Mono, monospace">r_1(A)</text>
+        <circle cx="640" cy="120" r="15" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="640" y="124" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">R2</text>
+        <line x1="655" y1="120" x2="790" y2="120" stroke="var(--o1)" stroke-opacity=".7"/>
+        <text x="668" y="116" font-size="11" font-family="IBM Plex Mono, monospace">r_2(A)</text>
+        <circle cx="640" cy="170" r="15" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="640" y="174" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">R3</text>
+        <line x1="655" y1="170" x2="790" y2="170" stroke="var(--o1)" stroke-opacity=".7"/>
+        <text x="668" y="166" font-size="11" font-family="IBM Plex Mono, monospace">r_3(A)</text>
+        <circle cx="640" cy="280" r="14" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="640" y="284" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">R1</text>
+        <line x1="654" y1="280" x2="790" y2="280" stroke="var(--o1)" stroke-opacity=".7"/>
+        <text x="668" y="276" font-size="11" font-family="IBM Plex Mono, monospace">r_1(B)</text>
+        <circle cx="640" cy="315" r="14" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="640" y="319" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">R2</text>
+        <line x1="654" y1="315" x2="790" y2="315" stroke="var(--o1)" stroke-opacity=".7"/>
+        <text x="668" y="311" font-size="11" font-family="IBM Plex Mono, monospace">r_2(B)</text>
+        <circle cx="640" cy="350" r="14" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="640" y="354" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">R3</text>
+        <line x1="654" y1="350" x2="790" y2="350" stroke="var(--o1)" stroke-opacity=".7"/>
+        <text x="668" y="346" font-size="11" font-family="IBM Plex Mono, monospace">r_3(B)</text>
+        <text x="660" y="210" text-anchor="middle" font-size="11" fill="var(--muted)">same receptor units,</text>
+        <text x="660" y="224" text-anchor="middle" font-size="11" fill="var(--muted)">same weights for A and B</text>
+        <rect x="790" y="52" width="90" height="136" rx="6" fill="var(--o1)" fill-opacity=".14" stroke="var(--o1)" stroke-width="2"/><text x="835" y="126" text-anchor="middle" font-weight="600" fill="var(--o1)">r(A)</text>
+        <rect x="790" y="262" width="90" height="104" rx="6" fill="var(--o1)" fill-opacity=".14" stroke="var(--o1)" stroke-width="2"/><text x="835" y="320" text-anchor="middle" font-weight="600" fill="var(--o1)">r(B)</text>
+        <rect x="920" y="150" width="205" height="120" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="1022" y="176" text-anchor="middle" font-weight="600">d(A, B) =</text>
+        <text x="1022" y="200" text-anchor="middle" font-family="IBM Plex Mono, monospace">sigmoid(<tspan fill="var(--rec)" font-weight="700">α</tspan>·‖<tspan fill="var(--rec)" font-weight="700">w</tspan> ⊙</text>
+        <text x="1022" y="218" text-anchor="middle" font-family="IBM Plex Mono, monospace">(<tspan fill="var(--o1)" font-weight="600">r(A)</tspan> − <tspan fill="var(--o1)" font-weight="600">r(B)</tspan>)‖ + <tspan fill="var(--rec)" font-weight="700">β</tspan>)</text>
+        <text x="1022" y="246" text-anchor="middle" font-size="11" fill="var(--muted)">orange = learned, teal = computed</text>
+        <path d="M880 120 H900 V190 H918" fill="none" stroke="currentColor" marker-end="url(#ar2)"/>
+        <path d="M880 314 H900 V230 H918" fill="none" stroke="currentColor" marker-end="url(#ar2)"/>
+        <text x="10" y="400" font-size="12" font-family="IBM Plex Mono, monospace">Inside receptor unit j:  r_j(A) = Σ_(m∈A) e(m, j)·x(m, j) / (1 + Σ_(m∈A) x(m, j)),  summed over the molecules m of mixture A only.</text>
+        <text x="10" y="420" font-size="11.5" fill="var(--muted)">The receptor layer has no weights of its own: it only applies the formula to the x and e computed by the learned heads [2] (teal lines).</text>
+        </svg>
+    </figure>
+    <h3 style="font-size:15px;margin:16px 0 8px">Indices and sizes (used in every equation below)</h3>
+    <div class="tablewrap" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th style="width:120px">index / size</th><th style="width:220px">runs over</th><th>meaning</th></tr></thead>
+        <tbody>
+          <tr><td class="m"><b>A, B</b></td><td>the two mixtures of a pair</td><td>input pair; "m ∈ A" = the molecules of mixture A</td></tr>
+          <tr><td class="m"><b>m</b></td><td>molecules (m1, m2, m3, …)</td><td>a single molecule; Σ_(m∈A) sums over the molecules of mixture A</td></tr>
+          <tr><td class="m"><b>j</b></td><td>1 … R</td><td>receptor unit of the hidden layer</td></tr>
+          <tr><td class="m"><b>R</b></td><td>64 (3 in the example)</td><td>number of receptor units</td></tr>
+          <tr><td class="m"><b>k</b></td><td>1 … D</td><td>one feature (number) of the encoder vector h(m)</td></tr>
+          <tr><td class="m"><b>D</b></td><td>512 (MIST) or 256 (open-POM)</td><td>length of h(m)</td></tr>
+          <tr><td class="m"><b>words</b></td><td>135 (MIST) or 138 (open-POM)</td><td>odour words of the readout; words(m) = 0/1 label per word for molecule m</td></tr>
+          <tr><td class="m"><b>pairs</b></td><td>820 training pairs (A, B, y)</td><td>y = target distance of the pair</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 style="font-size:15px;margin:16px 0 8px">Operations used in the equations</h3>
+    <div class="tablewrap" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th style="width:170px">operation</th><th style="width:250px">definition</th><th style="width:140px">shape</th><th>intuition and why we use it here</th></tr></thead>
+        <tbody>
+          <tr><td><b>linear map</b> <span style="color:var(--rec);font-weight:700">W</span> h + <span style="color:var(--rec);font-weight:700">b</span></td><td class="m">z_j = Σ_(k=1..D) W[j, k]·h_k(m) + b_j</td><td></td><td>Indices: j = receptor unit, k = feature of h(m). Row j of <span style="color:var(--rec);font-weight:700">W</span> is receptor j's <b>template</b> over the molecule features. The dot product scores how well molecule m matches that template: high score → binds (or activates) strongly. One score per receptor. This is the only place the molecule's features enter.</td></tr>
+          <tr><td><b>softplus</b></td><td class="m">softplus(z) = ln(1 + e^z)</td><td><svg viewBox="0 0 128 48" width="128" height="48" aria-hidden="true"><line x1="4" y1="44" x2="124" y2="44" stroke="var(--line)"/><line x1="64" y1="4" x2="64" y2="44" stroke="var(--line)" stroke-dasharray="2 2"/><polyline fill="none" stroke="var(--o1)" stroke-width="2" points="4,44.0 6,44.0 8,44.0 10,44.0 12,44.0 14,44.0 16,43.9 18,43.9 20,43.9 22,43.9 24,43.9 26,43.9 28,43.8 30,43.8 32,43.7 34,43.7 36,43.6 38,43.5 40,43.4 42,43.3 44,43.2 46,43.0 48,42.8 50,42.5 52,42.2 54,41.9 56,41.5 58,41.1 60,40.6 62,40.0 64,39.4 66,38.7 68,37.9 70,37.1 72,36.2 74,35.2 76,34.2 78,33.2 80,32.1 82,31.0 84,29.8 86,28.6 88,27.4 90,26.2 92,24.9 94,23.7 96,22.4 98,21.1 100,19.8 102,18.5 104,17.2 106,15.9 108,14.6 110,13.3 112,11.9 114,10.6 116,9.3 118,8.0 120,6.6 122,5.3 124,4.0"/></svg></td><td>A smooth ramp: ≈ 0 for very negative z, ≈ z for large z, always &gt; 0. <b>Why for binding x:</b> x must be ≥ 0 (a molecule cannot hold negative sites) and has no upper limit (x = 100 means it takes almost every site). For negative z, softplus ≈ e^z, which is the physical form x = e^(−ΔG/kT) for weak binders. For large z it grows linearly instead of exponentially, so training does not blow up. ReLU would give exactly 0 with zero gradient, so a unit could stop learning; exp could overflow.</td></tr>
+          <tr><td><b>sigmoid</b></td><td class="m">sigmoid(z) = 1 / (1 + e^(−z))</td><td><svg viewBox="0 0 128 48" width="128" height="48" aria-hidden="true"><line x1="4" y1="44" x2="124" y2="44" stroke="var(--line)"/><line x1="64" y1="4" x2="64" y2="44" stroke="var(--line)" stroke-dasharray="2 2"/><polyline fill="none" stroke="var(--o1)" stroke-width="2" points="4,43.9 6,43.9 8,43.9 10,43.8 12,43.8 14,43.7 16,43.7 18,43.6 20,43.5 22,43.4 24,43.3 26,43.1 28,42.9 30,42.7 32,42.4 34,42.1 36,41.7 38,41.2 40,40.7 42,40.0 44,39.2 46,38.3 48,37.3 50,36.1 52,34.7 54,33.2 56,31.6 58,29.8 60,27.9 62,26.0 64,24.0 66,22.0 68,20.1 70,18.2 72,16.4 74,14.8 76,13.3 78,11.9 80,10.7 82,9.7 84,8.8 86,8.0 88,7.3 90,6.8 92,6.3 94,5.9 96,5.6 98,5.3 100,5.1 102,4.9 104,4.7 106,4.6 108,4.5 110,4.4 112,4.3 114,4.3 116,4.2 118,4.2 120,4.1 122,4.1 124,4.1"/></svg></td><td>Squashes any number into (0, 1), smoothly. <b>Why for efficacy e:</b> e is a fraction of the receptor's maximum activation, so it must lie between 0 (blocker) and 1 (full activator). <b>Why for the distance d:</b> the target distance lies in [0, 1].</td></tr>
+          <tr><td><b>weighted Euclidean</b></td><td class="m">√( Σ_j w_j² (r_j(A) − r_j(B))² )</td><td></td><td>Length of the difference between the two receptor patterns. Symmetric, and 0 for identical patterns. <span style="color:var(--rec);font-weight:700">w_j</span> ≥ 0 lets receptors that matter for perception count more and others count less, but never backwards. It is the same distance family as the open-POM baseline recipe (finding 1); cosine is a CV alternative.</td></tr>
+          <tr><td><b>BCE</b> (binary cross-entropy)</td><td class="m">−[ t·ln p + (1 − t)·ln(1 − p) ], summed over words</td><td></td><td>The standard loss for yes/no labels: each odour word either applies to a molecule (t = 1) or not (t = 0), and p is the predicted probability. Large when the model is confidently wrong.</td></tr>
+          <tr><td><b>L1 penalty</b></td><td class="m">μ · Σ x</td><td></td><td>Adds a cost for every bit of binding, so most x are pushed to 0 and each molecule drives only a few receptors, as real molecules do. A sparse code is easier to read and overfits less.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 style="font-size:15px;margin:16px 0 8px">What each part is, why, and how it is computed (in network order)</h3>
+    <div style="display:grid;gap:12px">
+      <div class="card step">
+        <h3>Step 1 · molecule vector <span style="color:var(--enc);font-weight:600">h(m)</span> <span class="k fz" style="margin-left:6px">frozen</span></h3>
+        <table class="kv"><tbody>
+          <tr><td>What it is</td><td>A fixed list of numbers per molecule (open-POM: 256, MIST: 512) that describes the molecule in terms relevant to smell.</td></tr>
+          <tr><td>Why we need it</td><td>The mixture data have only 234 molecules, too few to learn chemistry. The encoder was already trained on 4,983 molecules with odour labels, so we reuse it.</td></tr>
+          <tr><td>Intuition</td><td>Molecules that smell alike get similar vectors.</td></tr>
+          <tr><td>Equation</td><td class="m eqn"><span style="color:var(--enc);font-weight:600">h(m)</span> = Encoder(m)</td></tr><tr><td>Note</td><td>Frozen: not changed by our training.</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card step">
+        <h3>Step 2 · binding <span style="color:var(--o1);font-weight:600">x(m, j)</span> <span class="k ln" style="margin-left:6px">learned → computed</span></h3>
+        <table class="kv"><tbody>
+          <tr><td>What it is</td><td>A number ≥ 0 for each molecule m and receptor unit j: how strongly m occupies j's binding sites.</td></tr>
+          <tr><td>Why we need it</td><td>In the nose, molecules in a mixture first compete for receptor binding sites. How strongly each one binds decides how many sites it takes, and so how much it pushes the others out.</td></tr>
+          <tr><td>Intuition</td><td>Alone, molecule m holds the share x/(1+x) of the sites: x = 0 → it ignores the receptor; x = 1 → half the sites; x = 4 → 80%. Large x = crowds out other molecules.</td></tr>
+          <tr><td>Equation</td><td class="m eqn"><span style="color:var(--o1);font-weight:600">x(m, j)</span> = softplus( <span style="color:var(--rec);font-weight:700">W_x</span> <span style="color:var(--enc);font-weight:600">h(m)</span> + <span style="color:var(--rec);font-weight:700">b_x</span> )<sub>j</sub></td></tr><tr><td>Note</td><td><span style="color:var(--rec);font-weight:700">W_x</span> (R × 512) and <span style="color:var(--rec);font-weight:700">b_x</span> (R) are learned. softplus keeps x ≥ 0 without an upper limit (see Operations). Physically x = (c/K)<sup>n</sup> (Hill: concentration c, binding constant K, coefficient n); without concentrations we learn x directly.</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card step">
+        <h3>Step 3 · efficacy <span style="color:var(--o1);font-weight:600">e(m, j)</span> <span class="k ln" style="margin-left:6px">learned → computed</span></h3>
+        <table class="kv"><tbody>
+          <tr><td>What it is</td><td>A number between 0 and 1 for each molecule m and receptor j: how strongly j fires while m sits in its sites.</td></tr>
+          <tr><td>Why we need it</td><td>Binding and activating are different things. A molecule can occupy a receptor without switching it on (a blocker). Without e, every molecule that binds would add signal, and suppression would be impossible.</td></tr>
+          <tr><td>Intuition</td><td>e = 1: full activator. e ≈ 0: binds but stays silent, so it only takes sites away from others. In between: partial activator.</td></tr>
+          <tr><td>Equation</td><td class="m eqn"><span style="color:var(--o1);font-weight:600">e(m, j)</span> = sigmoid( <span style="color:var(--rec);font-weight:700">W_e</span> <span style="color:var(--enc);font-weight:600">h(m)</span> + <span style="color:var(--rec);font-weight:700">b_e</span> )<sub>j</sub></td></tr><tr><td>Note</td><td><span style="color:var(--rec);font-weight:700">W_e</span> (R × 512) and <span style="color:var(--rec);font-weight:700">b_e</span> (R) are learned. sigmoid keeps e in [0, 1] (see Operations).</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card step">
+        <h3>Step 4 · receptor response <span style="color:var(--o1);font-weight:600">r_j(A)</span> = the hidden state <span class="k cp" style="margin-left:6px">computed</span></h3>
+        <table class="kv"><tbody>
+          <tr><td>What it is</td><td>For mixture A, one number per receptor unit j in [0, 1): how strongly that receptor responds to the whole mixture. The list r(A) = (r_1(A), …, r_R(A)) is the hidden state of A.</td></tr>
+          <tr><td>Why we need it</td><td>This is where the molecules of a mixture interact. Mean or sum pooling treats them independently; the shared binding sites make them compete, as receptors do.</td></tr>
+          <tr><td>Intuition</td><td>Each molecule holds the share x/(1 + Σx) of the sites (the 1 is the empty share), and the response is each share times its efficacy. More molecules fill the sites (<b>saturation</b>, not endless growth). A strong binder with low e takes sites and adds little (<b>suppression</b>).</td></tr>
+          <tr><td>Equation</td><td class="m eqn"><span style="color:var(--o1);font-weight:600">r_j(A)</span> = Σ<sub>m∈A</sub> <span style="color:var(--o1);font-weight:600">e(m, j)</span>·<span style="color:var(--o1);font-weight:600">x(m, j)</span> / ( 1 + Σ<sub>m∈A</sub> <span style="color:var(--o1);font-weight:600">x(m, j)</span> )</td></tr><tr><td>Note</td><td>No weights: this step only applies the formula to x and e. The same formula gives r(B) for mixture B.</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card step">
+        <h3>Step 5 · distance <span style="color:var(--o1);font-weight:600">d(A, B)</span> <span class="k ln" style="margin-left:6px">learned → computed</span></h3>
+        <table class="kv"><tbody>
+          <tr><td>What it is</td><td>The predicted perceptual distance between mixtures A and B, in [0, 1]: the model output, compared with the target.</td></tr>
+          <tr><td>Why we need it</td><td>The target is a distance, so we compare the two hidden states. Not every receptor matters equally for perception, so each gets a weight. The scale and level must match how people rate (identical mixtures are rated about 0.27 apart, not 0).</td></tr>
+          <tr><td>Intuition</td><td>The more the two receptor patterns differ on receptors that matter, the more different the mixtures smell.</td></tr>
+          <tr><td>Equation</td><td class="m eqn"><span style="color:var(--o1);font-weight:600">d(A, B)</span> = sigmoid( <span style="color:var(--rec);font-weight:700">α</span> · √( Σ<sub>j</sub> <span style="color:var(--rec);font-weight:700">w_j</span>² ( <span style="color:var(--o1);font-weight:600">r_j(A)</span> − <span style="color:var(--o1);font-weight:600">r_j(B)</span> )² ) + <span style="color:var(--rec);font-weight:700">β</span> )</td></tr><tr><td>Note</td><td><span style="color:var(--rec);font-weight:700">w_j</span> ≥ 0 (R), <span style="color:var(--rec);font-weight:700">α</span> and <span style="color:var(--rec);font-weight:700">β</span> are learned. Symmetric, and d(A, A) = sigmoid(β) for any mixture.</td></tr>
+        </tbody></table>
+      </div>
+      <div class="card step">
+        <h3>Step 6 · training loss <span class="k in" style="margin-left:6px">training only</span></h3>
+        <table class="kv"><tbody>
+          <tr><td>What it is</td><td>The number minimised when fitting the learned weights (orange).</td></tr>
+          <tr><td>Why we need it</td><td>① the distance must match the human labels; ② 820 pairs are too few to give 64 receptor units meaning, so single molecules (4,983) must also predict their odour words from their own receptor pattern; ③ real molecules drive only a few receptors.</td></tr>
+          <tr><td>Intuition</td><td>① fits the target, and squared error matches the RMSE score. ② keeps the hidden state about smell and trains the heads on 6× more molecules. ③ keeps the code sparse and readable, and limits overfitting.</td></tr>
+          <tr><td>Equation</td><td class="m eqn">loss = mean<sub>pairs</sub> ( <span style="color:var(--o1);font-weight:600">d(A, B)</span> − y )² + λ · BCE( sigmoid( <span style="color:var(--rec);font-weight:700">U</span> <span style="color:var(--o1);font-weight:600">r(m)</span> ), words(m) ) + μ · Σ <span style="color:var(--o1);font-weight:600">x</span></td></tr><tr><td>Note</td><td>y = target distance. r(m) = hidden state of molecule m alone. <span style="color:var(--rec);font-weight:700">U</span> (words × R) is a learned readout used only in training. λ and μ are chosen by cross-validation.</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+    <h3 style="font-size:15px;margin:16px 0 8px">All learned weights (R = 64, MIST: 512-d)</h3>
+    <div class="tablewrap" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th>weight</th><th>shape</th><th>count</th><th>used in</th></tr></thead>
+        <tbody>
+          <tr><td><span style="color:var(--rec);font-weight:700">W_x</span>, <span style="color:var(--rec);font-weight:700">b_x</span></td><td class="m">64 × 512, 64</td><td class="m">32,832</td><td>step 2, binding</td></tr>
+          <tr><td><span style="color:var(--rec);font-weight:700">W_e</span>, <span style="color:var(--rec);font-weight:700">b_e</span></td><td class="m">64 × 512, 64</td><td class="m">32,832</td><td>step 3, efficacy</td></tr>
+          <tr><td><span style="color:var(--rec);font-weight:700">w</span>, <span style="color:var(--rec);font-weight:700">α</span>, <span style="color:var(--rec);font-weight:700">β</span></td><td class="m">64, 1, 1</td><td class="m">66</td><td>step 5, distance</td></tr>
+          <tr><td><span style="color:var(--rec);font-weight:700">U</span> (+ bias)</td><td class="m">135 × 64, 135</td><td class="m">8,775</td><td>step 6, training only</td></tr>
+          <tr><td><b>total</b></td><td></td><td class="m"><b>74,505</b></td><td>open-POM (256-d): 41,737</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 style="font-size:15px;margin:18px 0 8px">Worked example with numbers</h3>
+    <div class="tablewrap" style="margin-bottom:12px">
+      <table>
+        <thead><tr><th>molecule (mixture)</th><th>R1: x, e</th><th>R2: x, e</th><th>R3: x, e</th></tr></thead>
+        <tbody>
+          <tr><td>m1 (in A)</td><td class="m">2, 1.0</td><td class="m">0.1, 0.5</td><td class="m">0, —</td></tr>
+          <tr><td>m2 (in A)</td><td class="m">4, 0.1</td><td class="m">1, 0.9</td><td class="m">0, —</td></tr>
+          <tr><td>m3 (in B)</td><td class="m">0.5, 0.8</td><td class="m">0.2, 0.5</td><td class="m">2, 0.9</td></tr>
+          <tr><td><b>r(A)</b>, mixture {m1, m2}</td><td class="m">(2·1 + 4·0.1) / (1+2+4) = 0.34</td><td class="m">(0.1·0.5 + 1·0.9) / (1+0.1+1) = 0.45</td><td class="m">0</td></tr>
+          <tr><td><b>r(B)</b>, mixture {m3}</td><td class="m">(0.5·0.8) / (1+0.5) = 0.27</td><td class="m">(0.2·0.5) / (1+0.2) = 0.08</td><td class="m">(2·0.9) / (1+2) = 0.60</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <figure>
+      <svg viewBox="0 0 1140 300" role="img" aria-label="Worked example. Receptor R1 for molecule m1 alone: m1 holds 67% of the sites, response 0.67. For mixture A = m1 + m2: m1 holds 29%, m2 holds 57% but barely activates, 14% empty, response 0.34. Right: r(A) = 0.34, 0.45, 0 and r(B) = 0.27, 0.08, 0.60 over R1 to R3; distance 0.71 before the sigmoid." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="12" fill="currentColor">
+        <text x="20" y="20" font-weight="600">Receptor R1, mixture A: the molecules share its binding sites (bar = 100% of the sites)</text>
+        <text x="20" y="48" font-weight="600">if mixture A held only m1</text>
+        <rect x="20.0" y="56" width="291.3" height="28" rx="3" fill="var(--enc)"/><text x="27.0" y="74" font-size="11.5" fill="#fff" font-weight="600">m1: 67% of sites, e = 1</text>
+        <rect x="313.3" y="56" width="146.7" height="28" rx="3" fill="none" stroke="var(--line)" stroke-dasharray="3 2"/><text x="386.7" y="74" text-anchor="middle" font-size="11" fill="var(--muted)">empty 33%</text>
+        <text x="20" y="106" font-family="IBM Plex Mono, monospace">r_1 = 0.67 × 1 = 0.67</text>
+        <text x="20" y="148" font-weight="600">mixture A = {m1, m2}</text>
+        <rect x="20.0" y="156" width="123.7" height="28" rx="3" fill="var(--enc)"/><text x="27.0" y="174" font-size="11.5" fill="#fff" font-weight="600">m1: 29%</text>
+        <rect x="145.7" y="156" width="249.4" height="28" rx="3" fill="var(--rec)"/><text x="152.7" y="174" font-size="11.5" fill="#fff" font-weight="600">m2: 57%, e = 0.1</text>
+        <rect x="397.1" y="156" width="62.9" height="28" rx="3" fill="none" stroke="var(--line)" stroke-dasharray="3 2"/><text x="428.6" y="174" text-anchor="middle" font-size="11" fill="var(--muted)">empty 14%</text>
+        <text x="20" y="206" font-family="IBM Plex Mono, monospace">r_1(A) = 0.29 × 1 + 0.57 × 0.1 = 0.34</text>
+        <text x="20" y="254" font-size="11.5" fill="var(--muted)">m2 binds R1 strongly (x = 4) but barely activates it (e = 0.1): it takes sites from m1,</text>
+        <text x="20" y="270" font-size="11.5" fill="var(--muted)">so R1 drops from 0.67 to 0.34. A mean or sum of the molecules cannot do this.</text>
+        <text x="560" y="20" font-weight="600">Hidden states r(A) and r(B), then the distance</text>
+        <line x1="590" y1="210" x2="1120" y2="210" stroke="var(--line)"/>
+        <line x1="590" y1="135.0" x2="1120" y2="135.0" stroke="var(--line)" stroke-dasharray="2 3"/><text x="584" y="139.0" text-anchor="end" font-size="11" fill="var(--muted)">0.5</text>
+        <line x1="590" y1="60.0" x2="1120" y2="60.0" stroke="var(--line)" stroke-dasharray="2 3"/><text x="584" y="64.0" text-anchor="end" font-size="11" fill="var(--muted)">1</text>
+        <text x="584" y="214" text-anchor="end" font-size="11" fill="var(--muted)">0</text>
+        <path d="M674 210 V162.55 q0 -4 4 -4 h12 q4 0 4 4 V210 z" fill="currentColor" fill-opacity=".85"><title>r_1(A) = 0.34</title></path>
+        <text x="684" y="152.6" text-anchor="middle" font-size="11">0.34</text>
+        <path d="M706 210 V173.95 q0 -4 4 -4 h12 q4 0 4 4 V210 z" fill="currentColor" fill-opacity=".4"><title>r_1(B) = 0.27</title></path>
+        <text x="716" y="163.9" text-anchor="middle" font-size="11">0.27</text>
+        <text x="700" y="228" text-anchor="middle" font-weight="600">R1</text>
+        <text x="700" y="244" text-anchor="middle" font-size="11" fill="var(--muted)">|difference| = 0.08</text>
+        <path d="M824 210 V146.2 q0 -4 4 -4 h12 q4 0 4 4 V210 z" fill="currentColor" fill-opacity=".85"><title>r_2(A) = 0.45</title></path>
+        <text x="834" y="136.2" text-anchor="middle" font-size="11">0.45</text>
+        <path d="M856 210 V201.55 q0 -4 4 -4 h12 q4 0 4 4 V210 z" fill="currentColor" fill-opacity=".4"><title>r_2(B) = 0.08</title></path>
+        <text x="866" y="191.6" text-anchor="middle" font-size="11">0.08</text>
+        <text x="850" y="228" text-anchor="middle" font-weight="600">R2</text>
+        <text x="850" y="244" text-anchor="middle" font-size="11" fill="var(--muted)">|difference| = 0.37</text>
+        <text x="984" y="204.0" text-anchor="middle" font-size="11">0.00</text>
+        <path d="M1006 210 V124.0 q0 -4 4 -4 h12 q4 0 4 4 V210 z" fill="currentColor" fill-opacity=".4"><title>r_3(B) = 0.60</title></path>
+        <text x="1016" y="114.0" text-anchor="middle" font-size="11">0.60</text>
+        <text x="1000" y="228" text-anchor="middle" font-weight="600">R3</text>
+        <text x="1000" y="244" text-anchor="middle" font-size="11" fill="var(--muted)">|difference| = 0.60</text>
+        <rect x="590" y="34" width="12" height="12" rx="2" fill="currentColor" fill-opacity=".85"/><text x="608" y="45" >r(A), mixture A = {m1, m2}</text>
+        <rect x="810" y="34" width="12" height="12" rx="2" fill="currentColor" fill-opacity=".4"/><text x="828" y="45" >r(B), mixture B = {m3}</text>
+        <text x="590" y="280" font-family="IBM Plex Mono, monospace">‖r(A) − r(B)‖ = 0.71 (with w = 1)   →   d(A, B) = sigmoid(α·0.71 + β)</text>
+        </svg>
+      <figcaption>Toy numbers, chosen by hand to show the mechanism. In O1, x and e come from the heads and R = 64.</figcaption>
+    </figure>
+  </section>
+
+  <section id="o10">
+    <h2>O1.0: the first step, compared with B1a and O1</h2>
+    <p>O1.0 keeps B1a's frozen open-POM odour words and changes only how the molecules of a mixture are combined. <b>Each odour word is treated as one receptor.</b> A molecule's activation of that receptor is its own word score. The molecules of a mixture compete for the receptor's sites with one binding strength per word.</p>
+    <p><b>Why 138:</b> open-POM's output layer predicts exactly 138 odour words, the label set of its training data (GS-LF: 4,983 molecules, 138 descriptors). We take those 138 outputs as they are. So O1.0 has 138 receptors, one per word, and adds no units of its own.</p>
+    <h3 style="font-size:15px;margin:12px 0 8px">How O1.0 differs from O1, the model we trained</h3>
+    <div class="tablewrap" style="margin-bottom:8px">
+      <table>
+        <thead><tr><th></th><th>O1 (trained; did not beat B1a)</th><th>O1.0</th></tr></thead>
+        <tbody>
+          <tr><td>receptors</td><td>64 abstract receptors, invented and learned from the DREAM pairs</td><td>138 fixed receptors = open-POM's 138 odour words; nothing to invent</td></tr>
+          <tr><td>activation e(m, ·)</td><td>learned: head W_e on the 256-d embedding</td><td>not learned: the molecule's open-POM word score (frozen)</td></tr>
+          <tr><td>binding</td><td>learned per molecule and receptor: head W_x on the embedding</td><td>one number s_w per word, the same for every molecule</td></tr>
+          <tr><td>learned weights</td><td>41,737</td><td>278</td></tr>
+          <tr><td>extra losses</td><td>odour-word readout, L1 sparsity, GoodScents pair pretraining</td><td>none: only the DREAM pair loss</td></tr>
+          <tr><td>distance</td><td>weighted Euclidean, then sigmoid</td><td>length 1, weighted Euclidean, then a line (as B1a)</td></tr>
+          <tr><td>what went wrong / why</td><td>With 41,737 weights and 820 pairs it memorised the training mixtures: train RMSE fell from 0.097 to 0.031 while held-out RMSE stayed at about 0.14. It also discarded open-POM's word outputs, which are what makes B1a work on V50.</td><td>Starts from B1a's working representation and changes only the mixing rule (plus per-word weights). 278 weights are too few to memorise 820 pairs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">In one line: O1 learns what the receptors are; O1.0 takes the receptors as given (open-POM's words) and learns only how strongly molecules compete for each one.</p>
+    <div class="tablewrap" style="margin:12px 0 14px">
+      <table>
+        <tbody>
+          <tr><td style="width:190px"><span class="k in">given (input)</span></td><td>Two <b>mixtures</b> A and B, each a set of molecules, e.g. A = {m1, m2}, B = {m3}. No concentrations.</td></tr>
+          <tr><td><span class="k in">target (output)</span></td><td><b>d(A, B)</b>: the human perceptual distance between the two mixtures. Training labels: the DREAM 2 training pairs only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend"><span><span class="k fz">frozen</span> pretrained, not trained here</span><span><span class="k ln">learned</span> weights trained on our data</span><span><span class="k cp">computed</span> fixed formula, no weights of its own</span><span><span class="k in">input</span> data</span></div>
+
+    <h3 style="font-size:15px;margin:6px 0 8px">Figure 1 · Network map of O1.0</h3>
+    <figure>
+      <svg viewBox="0 0 1140 390" role="img" aria-label="O1.0 network map. Molecules m1 and m2 of mixture A and m3 of mixture B go through frozen open-POM to word probabilities, then a quantile step gives activations e per word. Each word is one receptor with a learned binding strength s. The receptors of copy A receive the activations of m1 and m2; copy B receives m3. The receptor patterns r(A) and r(B) go to a weighted distance with learned weights v, alpha and beta, giving d." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="12" fill="currentColor">
+        <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+        <text x="75" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">INPUT</text>
+        <text x="255" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">[1] open-POM</text>
+        <text x="415" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">[2] quantile</text>
+        <text x="645" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">[3] receptor layer</text>
+        <text x="805" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">hidden state</text>
+        <text x="985" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">[4] distance</text>
+        <text x="1105" y="22" text-anchor="middle" font-weight="600" fill="var(--muted)">OUTPUT</text>
+
+        <rect x="10" y="38" width="130" height="172" rx="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="22" y="58" font-weight="600">mixture A</text>
+        <rect x="10" y="250" width="130" height="110" rx="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="22" y="270" font-weight="600">mixture B</text>
+
+        <!-- m1 -->
+        <circle cx="75" cy="95" r="20" fill="var(--enc)" fill-opacity=".15" stroke="var(--enc)" stroke-width="1.5"/><text x="75" y="99" text-anchor="middle" font-weight="600">m1</text>
+        <line x1="95" y1="95" x2="188" y2="95" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="190" y="78" width="130" height="34" rx="6" fill="var(--enc)" fill-opacity=".10" stroke="var(--enc)"/><text x="255" y="99" text-anchor="middle" font-family="IBM Plex Mono, monospace">p(m1, ·)</text>
+        <line x1="320" y1="95" x2="358" y2="95" stroke="currentColor" marker-end="url(#ar3)"/>
+        <text x="383" y="64" text-anchor="middle" font-size="10" fill="var(--muted)">fr</text><text x="415" y="64" text-anchor="middle" font-size="10" fill="var(--muted)">gr</text><text x="447" y="64" text-anchor="middle" font-size="10" fill="var(--muted)">wo</text>
+        <rect x="360" y="70" width="110" height="50" rx="6" fill="none" stroke="var(--o1)"/>
+        <rect x="372" y="81.6" width="22" height="32.4" fill="var(--o1)" fill-opacity=".6"/><rect x="404" y="106.8" width="22" height="7.2" fill="var(--o1)" fill-opacity=".6"/><rect x="436" y="110.4" width="22" height="3.6" fill="var(--o1)" fill-opacity=".6"/>
+        <text x="415" y="134" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--o1)">e(m1, ·)</text>
+        <!-- m2 -->
+        <circle cx="75" cy="165" r="20" fill="var(--enc)" fill-opacity=".15" stroke="var(--enc)" stroke-width="1.5"/><text x="75" y="169" text-anchor="middle" font-weight="600">m2</text>
+        <line x1="95" y1="165" x2="188" y2="165" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="190" y="148" width="130" height="34" rx="6" fill="var(--enc)" fill-opacity=".10" stroke="var(--enc)"/><text x="255" y="169" text-anchor="middle" font-family="IBM Plex Mono, monospace">p(m2, ·)</text>
+        <line x1="320" y1="165" x2="358" y2="165" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="360" y="140" width="110" height="50" rx="6" fill="none" stroke="var(--o1)"/>
+        <rect x="372" y="180.4" width="22" height="3.6" fill="var(--o1)" fill-opacity=".6"/><rect x="404" y="155.2" width="22" height="28.8" fill="var(--o1)" fill-opacity=".6"/><rect x="436" y="180.4" width="22" height="3.6" fill="var(--o1)" fill-opacity=".6"/>
+        <text x="415" y="204" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--o1)">e(m2, ·)</text>
+        <!-- m3 -->
+        <circle cx="75" cy="315" r="20" fill="var(--enc)" fill-opacity=".15" stroke="var(--enc)" stroke-width="1.5"/><text x="75" y="319" text-anchor="middle" font-weight="600">m3</text>
+        <line x1="95" y1="315" x2="188" y2="315" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="190" y="298" width="130" height="34" rx="6" fill="var(--enc)" fill-opacity=".10" stroke="var(--enc)"/><text x="255" y="319" text-anchor="middle" font-family="IBM Plex Mono, monospace">p(m3, ·)</text>
+        <line x1="320" y1="315" x2="358" y2="315" stroke="currentColor" marker-end="url(#ar3)"/>
+        <text x="383" y="284" text-anchor="middle" font-size="10" fill="var(--muted)">fr</text><text x="415" y="284" text-anchor="middle" font-size="10" fill="var(--muted)">gr</text><text x="447" y="284" text-anchor="middle" font-size="10" fill="var(--muted)">wo</text>
+        <rect x="360" y="290" width="110" height="50" rx="6" fill="none" stroke="var(--o1)"/>
+        <rect x="372" y="316" width="22" height="18" fill="var(--o1)" fill-opacity=".6"/><rect x="404" y="330.4" width="22" height="3.6" fill="var(--o1)" fill-opacity=".6"/><rect x="436" y="308.8" width="22" height="25.2" fill="var(--o1)" fill-opacity=".6"/>
+        <text x="415" y="354" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--o1)">e(m3, ·)</text>
+
+        <!-- receptor layer, copy A -->
+        <rect x="560" y="44" width="170" height="152" rx="10" fill="var(--o1)" fill-opacity=".06" stroke="var(--o1)" stroke-dasharray="4 3"/>
+        <line x1="470" y1="95" x2="576" y2="70" stroke="var(--o1)" stroke-opacity=".55"/><line x1="470" y1="165" x2="576" y2="70" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="470" y1="95" x2="576" y2="120" stroke="var(--o1)" stroke-opacity=".55"/><line x1="470" y1="165" x2="576" y2="120" stroke="var(--o1)" stroke-opacity=".55"/>
+        <line x1="470" y1="95" x2="576" y2="170" stroke="var(--o1)" stroke-opacity=".55"/><line x1="470" y1="165" x2="576" y2="170" stroke="var(--o1)" stroke-opacity=".55"/>
+        <circle cx="592" cy="70" r="16" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="592" y="74" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">fr</text>
+        <text x="616" y="67" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--rec)" font-weight="700">s_fr = 1</text><text x="616" y="82" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--o1)">r_fr(A)=0.33</text>
+        <circle cx="592" cy="120" r="16" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="592" y="124" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">gr</text>
+        <text x="616" y="117" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--rec)" font-weight="700">s_gr = 10</text><text x="616" y="132" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--o1)">r_gr(A)=0.48</text>
+        <circle cx="592" cy="170" r="16" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="592" y="174" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">wo</text>
+        <text x="616" y="167" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--rec)" font-weight="700">s_wo = 0.2</text><text x="616" y="182" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--o1)">r_wo(A)=0.03</text>
+        <!-- receptor layer, copy B -->
+        <rect x="560" y="258" width="170" height="116" rx="10" fill="var(--o1)" fill-opacity=".06" stroke="var(--o1)" stroke-dasharray="4 3"/>
+        <line x1="470" y1="315" x2="578" y2="280" stroke="var(--o1)" stroke-opacity=".55"/><line x1="470" y1="315" x2="578" y2="315" stroke="var(--o1)" stroke-opacity=".55"/><line x1="470" y1="315" x2="578" y2="350" stroke="var(--o1)" stroke-opacity=".55"/>
+        <circle cx="592" cy="280" r="14" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="592" y="284" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">fr</text>
+        <text x="616" y="277" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--rec)" font-weight="700">s_fr = 1</text><text x="616" y="291" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--o1)">r_fr(B)=0.25</text>
+        <circle cx="592" cy="315" r="14" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="592" y="319" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">gr</text>
+        <text x="616" y="312" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--rec)" font-weight="700">s_gr = 10</text><text x="616" y="326" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--o1)">r_gr(B)=0.09</text>
+        <circle cx="592" cy="350" r="14" fill="var(--panel)" stroke="var(--o1)" stroke-width="2"/><text x="592" y="354" text-anchor="middle" font-size="11" font-weight="600" fill="var(--o1)">wo</text>
+        <text x="616" y="347" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--rec)" font-weight="700">s_wo = 0.2</text><text x="616" y="361" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--o1)">r_wo(B)=0.12</text>
+
+        <!-- hidden state -->
+        <line x1="730" y1="120" x2="743" y2="120" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="745" y="103" width="120" height="34" rx="6" fill="var(--o1)" fill-opacity=".10" stroke="var(--o1)"/><text x="805" y="124" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">r(A): 138 values</text>
+        <line x1="730" y1="315" x2="743" y2="315" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="745" y="298" width="120" height="34" rx="6" fill="var(--o1)" fill-opacity=".10" stroke="var(--o1)"/><text x="805" y="319" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">r(B): 138 values</text>
+
+        <!-- distance -->
+        <line x1="865" y1="120" x2="903" y2="205" stroke="currentColor" marker-end="url(#ar3)"/>
+        <line x1="865" y1="315" x2="903" y2="238" stroke="currentColor" marker-end="url(#ar3)"/>
+        <rect x="905" y="180" width="160" height="80" rx="8" fill="var(--o1)" fill-opacity=".06" stroke="var(--o1)"/>
+        <text x="985" y="203" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">u = r / ‖r‖</text>
+        <text x="985" y="223" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">‖<tspan fill="var(--rec)" font-weight="700">v</tspan> ⊙ (u(A) − u(B))‖</text>
+        <text x="985" y="243" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5"><tspan fill="var(--rec)" font-weight="700">α</tspan> · (…) + <tspan fill="var(--rec)" font-weight="700">β</tspan></text>
+        <line x1="1065" y1="220" x2="1081" y2="220" stroke="currentColor" marker-end="url(#ar3)"/>
+        <circle cx="1105" cy="220" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><text x="1105" y="225" text-anchor="middle" font-weight="700" font-size="14">d</text>
+        <text x="1105" y="262" text-anchor="middle" font-size="11" fill="var(--muted)">trained against</text>
+        <text x="1105" y="276" text-anchor="middle" font-size="11" fill="var(--muted)">human d</text>
+      </svg>
+      <figcaption>Three of the 138 odour words are drawn: fr = fruity, gr = green, wo = woody. Each molecule's word scores (bars) are its activations e. Each receptor in copy A receives that word's e from every molecule in A (m1 and m2); copy B receives it from m3. Binding strengths s (orange) are learned, one per word, and shared by copies A and B. The receptor values r come from the formula in Figure 2. Learned weights: 138 values of s, 138 distance weights v, plus α and β, so 278 in total. Example numbers: e(m1) = (0.9, 0.2, 0.1), e(m2) = (0.1, 0.8, 0.1), e(m3) = (0.5, 0.1, 0.7).</figcaption>
+    </figure>
+
+    <h3 style="font-size:15px;margin:18px 0 8px">Figure 2 · One receptor ("fruity"): B1a averages, O1.0 lets molecules compete for sites</h3>
+    <figure>
+      <svg viewBox="0 0 1140 290" role="img" aria-label="Left: B1a averages the fruity scores of m1 (0.9) and m2 (0.1) to 0.5, the same as m3 alone, so A and B look equal on fruity. Right: in O1.0 the receptor's sites are shared. With binding s = 0.2 each molecule holds 14% of sites and 71% stay empty, r = 0.14. With s = 1 each holds 33%, r = 0.33. With s = 10 each holds 48%, r = 0.48, close to the average. Mixture B with s = 1: m3 holds 50%, r = 0.25." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="12" fill="currentColor">
+        <!-- left: B1a -->
+        <text x="20" y="22" font-weight="700">B1a: average of e</text>
+        <text x="20" y="42" font-size="11" fill="var(--muted)">A = {m1, m2}</text>
+        <text x="20" y="67" font-weight="600">m1</text><rect x="55" y="54" width="180" height="18" rx="3" fill="currentColor" fill-opacity=".35"/><text x="242" y="67" font-family="IBM Plex Mono, monospace" font-size="11">e = 0.9</text>
+        <text x="20" y="107" font-weight="600">m2</text><rect x="55" y="94" width="20" height="18" rx="3" fill="currentColor" fill-opacity=".20"/><text x="82" y="107" font-family="IBM Plex Mono, monospace" font-size="11">e = 0.1</text>
+        <text x="20" y="147" font-weight="700">A</text><rect x="55" y="134" width="100" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="162" y="147" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--o1)">mean = 0.50</text>
+        <text x="20" y="202" font-size="11" fill="var(--muted)">B = {m3}</text>
+        <text x="20" y="227" font-weight="700">B</text><rect x="55" y="214" width="100" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="162" y="227" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--o1)">m3 alone = 0.50</text>
+        <text x="20" y="270" font-size="11.5" fill="var(--muted)">A and B look the same on fruity.</text>
+        <line x1="335" y1="10" x2="335" y2="280" stroke="var(--line)"/>
+
+        <!-- right: O1.0 -->
+        <text x="360" y="22" font-weight="700">O1.0: the receptor's sites, shared by competition</text>
+        <text x="470" y="42" font-size="11" fill="var(--muted)">A = {m1 (e 0.9), m2 (e 0.1)}: each bar is 100% of the fruity sites</text>
+        <!-- s = 0.2 -->
+        <text x="460" y="62" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)" font-weight="700">s = 0.2</text><text x="460" y="75" text-anchor="end" font-size="10.5" fill="var(--muted)">sum-like</text>
+        <rect x="470" y="50" width="69" height="26" rx="3" fill="currentColor" fill-opacity=".40"/><text x="504" y="67" text-anchor="middle" font-size="11">m1 14%</text>
+        <rect x="541" y="50" width="69" height="26" rx="3" fill="currentColor" fill-opacity=".20"/><text x="575" y="67" text-anchor="middle" font-size="11">m2 14%</text>
+        <rect x="612" y="50" width="358" height="26" rx="3" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-dasharray="3 3"/><text x="791" y="67" text-anchor="middle" font-size="11" fill="var(--muted)">empty 71%</text>
+        <text x="985" y="67" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--o1)" font-weight="700">r = 0.14</text>
+        <!-- s = 1 -->
+        <text x="460" y="102" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)" font-weight="700">s = 1</text>
+        <rect x="470" y="90" width="165" height="26" rx="3" fill="currentColor" fill-opacity=".40"/><text x="552" y="107" text-anchor="middle" font-size="11">m1 33%</text>
+        <rect x="637" y="90" width="165" height="26" rx="3" fill="currentColor" fill-opacity=".20"/><text x="719" y="107" text-anchor="middle" font-size="11">m2 33%</text>
+        <rect x="804" y="90" width="166" height="26" rx="3" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-dasharray="3 3"/><text x="887" y="107" text-anchor="middle" font-size="11" fill="var(--muted)">empty 33%</text>
+        <text x="985" y="107" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--o1)" font-weight="700">r = 0.33</text>
+        <!-- s = 10 -->
+        <text x="460" y="142" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)" font-weight="700">s = 10</text><text x="460" y="155" text-anchor="end" font-size="10.5" fill="var(--muted)">mean-like</text>
+        <rect x="470" y="130" width="236" height="26" rx="3" fill="currentColor" fill-opacity=".40"/><text x="588" y="147" text-anchor="middle" font-size="11">m1 48%</text>
+        <rect x="708" y="130" width="236" height="26" rx="3" fill="currentColor" fill-opacity=".20"/><text x="826" y="147" text-anchor="middle" font-size="11">m2 48%</text>
+        <rect x="946" y="130" width="24" height="26" rx="3" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-dasharray="3 3"/>
+        <text x="985" y="147" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--o1)" font-weight="700">r = 0.48 ≈ mean</text>
+        <!-- B -->
+        <text x="470" y="202" font-size="11" fill="var(--muted)">B = {m3 (e 0.5)}</text>
+        <text x="460" y="227" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)" font-weight="700">s = 1</text>
+        <rect x="470" y="210" width="248" height="26" rx="3" fill="currentColor" fill-opacity=".30"/><text x="594" y="227" text-anchor="middle" font-size="11">m3 50%</text>
+        <rect x="720" y="210" width="250" height="26" rx="3" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-dasharray="3 3"/><text x="845" y="227" text-anchor="middle" font-size="11" fill="var(--muted)">empty 50%</text>
+        <text x="985" y="227" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--o1)" font-weight="700">r = 0.25</text>
+        <text x="360" y="270" font-family="IBM Plex Mono, monospace" font-size="11.5">share per molecule = s / (1 + n·s)   empty = 1 / (1 + n·s)   r = Σ (share × e)</text>
+      </svg>
+      <figcaption>Every molecule in the mixture binds the fruity receptor with the same strength s, so each holds the same share of the sites. A bound molecule activates the receptor by its own e, and empty sites give nothing. With a small s, most sites stay empty: each molecule adds its own share, so r grows with the number of molecules, like a sum. With a large s, the sites are full and split evenly, so r becomes the average, which is exactly B1a. s is learned per word, so the training data decide, word by word, whether that note adds up or averages out. At s = 1, A (0.33) is more fruity than B (0.25); B1a sees them as equal.</figcaption>
+    </figure>
+
+    <h3 style="font-size:15px;margin:18px 0 8px">Figure 3 · What is shared and what differs per molecule</h3>
+    <figure>
+      <svg viewBox="0 0 1140 220" role="img" aria-label="Left, O1.0: on the fruity receptor, m1, m2 and m3 have equal binding bars (s_fr) but activation bars of 0.9, 0.1 and 0.5. Right, O1: on learned receptor j, binding differs (2, 4, 0.3) and activation differs (0.9, 0.05, 0.5); m2 binds strongly but barely activates, a blocker." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="12" fill="currentColor">
+        <text x="20" y="22" font-weight="700">O1.0 · receptor = odour word "fruity"</text>
+        <text x="60" y="46" font-size="11" fill="var(--muted)">binding (learned, one per word)</text>
+        <text x="300" y="46" font-size="11" fill="var(--muted)">activation e (own per molecule)</text>
+        <text x="20" y="74" font-weight="600">m1</text><rect x="60" y="61" width="90" height="18" rx="3" fill="var(--rec)" fill-opacity=".30" stroke="var(--rec)"/><text x="157" y="74" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)">s_fr</text>
+        <rect x="300" y="61" width="135" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="442" y="74" font-family="IBM Plex Mono, monospace" font-size="11">0.9</text>
+        <text x="20" y="114" font-weight="600">m2</text><rect x="60" y="101" width="90" height="18" rx="3" fill="var(--rec)" fill-opacity=".30" stroke="var(--rec)"/><text x="157" y="114" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)">s_fr</text>
+        <rect x="300" y="101" width="15" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="322" y="114" font-family="IBM Plex Mono, monospace" font-size="11">0.1</text>
+        <text x="20" y="154" font-weight="600">m3</text><rect x="60" y="141" width="90" height="18" rx="3" fill="var(--rec)" fill-opacity=".30" stroke="var(--rec)"/><text x="157" y="154" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--rec)">s_fr</text>
+        <rect x="300" y="141" width="75" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="382" y="154" font-family="IBM Plex Mono, monospace" font-size="11">0.5</text>
+        <text x="20" y="196" font-size="11.5" fill="var(--muted)">Same binding, different activation: no blockers.</text>
+        <line x1="565" y1="10" x2="565" y2="210" stroke="var(--line)"/>
+
+        <text x="590" y="22" font-weight="700">O1 · receptor j (one of 64 learned)</text>
+        <text x="630" y="46" font-size="11" fill="var(--muted)">binding x(m, j)</text>
+        <text x="900" y="46" font-size="11" fill="var(--muted)">activation e(m, j)</text>
+        <text x="590" y="74" font-weight="600">m1</text><rect x="630" y="61" width="70" height="18" rx="3" fill="var(--o1)" fill-opacity=".30" stroke="var(--o1)"/><text x="707" y="74" font-family="IBM Plex Mono, monospace" font-size="11">2</text>
+        <rect x="900" y="61" width="135" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="1042" y="74" font-family="IBM Plex Mono, monospace" font-size="11">0.9</text>
+        <text x="590" y="114" font-weight="600">m2</text><rect x="630" y="101" width="140" height="18" rx="3" fill="var(--o1)" fill-opacity=".30" stroke="var(--o1)"/><text x="777" y="114" font-family="IBM Plex Mono, monospace" font-size="11">4</text>
+        <rect x="900" y="101" width="8" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="915" y="114" font-family="IBM Plex Mono, monospace" font-size="11">0.05  blocker</text>
+        <text x="590" y="154" font-weight="600">m3</text><rect x="630" y="141" width="11" height="18" rx="3" fill="var(--o1)" fill-opacity=".30" stroke="var(--o1)"/><text x="648" y="154" font-family="IBM Plex Mono, monospace" font-size="11">0.3</text>
+        <rect x="900" y="141" width="75" height="18" rx="3" fill="var(--o1)" fill-opacity=".6"/><text x="982" y="154" font-family="IBM Plex Mono, monospace" font-size="11">0.5</text>
+        <text x="590" y="196" font-size="11.5" fill="var(--muted)">Both differ per molecule: blockers possible, but about 42k weights to learn.</text>
+      </svg>
+      <figcaption>Biologically, O1.0 says: there is one receptor type per odour word. All molecules stick to it equally well, but each turns it on by its own amount. O1 lets each molecule also have its own binding to each of 64 learned receptor types, so a molecule can occupy sites without activating them (m2, a blocker) and lower the response of the others. O1.0 cannot express that. Its binding is learned (orange); in O1, x and e are computed from learned heads (teal).</figcaption>
+    </figure>
+
+    <h3 style="font-size:15px;margin:18px 0 8px">B1 / B1a / O1.0 / O1 side by side</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>B1</th><th>B1a (open-POM baseline)</th><th>O1.0</th><th>O1</th></tr></thead>
+        <tbody>
+          <tr><td>per molecule</td><td>open-POM word probabilities p</td><td>p, quantile-transformed per word</td><td>same as B1a, used as activation e (frozen)</td><td>encoder vector h → learned heads give x and e</td></tr>
+          <tr><td>hidden units</td><td>none</td><td>none</td><td>138, one per odour word</td><td>64 learned receptors</td></tr>
+          <tr><td>binding</td><td>—</td><td>—</td><td>s_w, one per word, same for every molecule</td><td>x(m, j), per molecule and receptor</td></tr>
+          <tr><td>activation level</td><td>—</td><td>—</td><td>e(m, w), differs per molecule</td><td>e(m, j), differs per molecule</td></tr>
+          <tr><td>how molecules mix</td><td>mean</td><td>mean</td><td>competition: sum-like (small s_w) to mean (large s_w)</td><td>competition</td></tr>
+          <tr><td>distance</td><td>cosine, then a line</td><td>length 1, Euclidean, then a line</td><td>length 1, weighted Euclidean (v_w), then a line</td><td>weighted Euclidean, then sigmoid</td></tr>
+          <tr><td>blockers</td><td>no</td><td>no</td><td>no</td><td>yes</td></tr>
+          <tr><td>learned weights</td><td>2</td><td>2</td><td>278</td><td>41,737 (open-POM) / 74,505 (MIST)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">O1.0 differs from B1a in exactly two places: the mixing rule and the per-word weights v_w. With every s_w large and every v_w equal, O1.0 is B1a. Both can be switched on separately. One caveat: because of the length-1 step, a binding strength shared by every word only rescales r(A), and that cancels out. Competition changes the pattern through differences between the s_w of different words. A version without the length-1 step tests the full effect.</p>
+
+    <h3 style="font-size:15px;margin:18px 0 8px">Symbols</h3>
+    <div class="tablewrap">
+      <table class="kv">
+        <tbody>
+          <tr><td>m</td><td>a molecule; m1, m2, m3 in the figures</td></tr>
+          <tr><td>A, B</td><td>the two mixtures being compared (sets of molecules)</td></tr>
+          <tr><td>n</td><td>number of molecules in the mixture (2 for A, 1 for B above)</td></tr>
+          <tr><td>w</td><td>odour-word index, 1…138 (fr, gr, wo in the figures); in O1.0 also the receptor index</td></tr>
+          <tr><td>p(m, w)</td><td>open-POM probability that molecule m has word w <span class="k fz">frozen</span></td></tr>
+          <tr><td>e(m, w)</td><td>activation of receptor w by molecule m, in [0, 1]: p after the per-word quantile transform <span class="k cp">computed</span></td></tr>
+          <tr><td>s_w</td><td>binding strength of receptor w, &gt; 0, same for every molecule <span class="k ln">learned</span></td></tr>
+          <tr><td>r_w(A)</td><td>response of receptor w to mixture A: s_w · Σ_{m∈A} e(m, w) / (1 + n · s_w) <span class="k cp">computed</span></td></tr>
+          <tr><td>u(A)</td><td>r(A) scaled to length 1 <span class="k cp">computed</span></td></tr>
+          <tr><td>v_w</td><td>distance weight of word w, ≥ 0 <span class="k ln">learned</span></td></tr>
+          <tr><td>α, β</td><td>slope and offset of the final line <span class="k ln">learned</span></td></tr>
+          <tr><td>d(A, B)</td><td>predicted distance = α · √(Σ_w v_w² (u_w(A) − u_w(B))²) + β; trained by squared error against the human distance</td></tr>
+          <tr><td>x(m, j), e(m, j), j</td><td>O1 only: binding and activation of molecule m on learned receptor j (j = 1…64)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Contributions (O1)</h2>
+    <ol style="margin:0;padding-left:20px;max-width:95ch">
+      <li><b>A mixing layer with a biophysical form.</b> Molecules combine by competitive binding with separate affinity and efficacy, learned from molecular structure and trained on perceptual mixture distance. Other DREAM models combine molecules by mean, weighted sum, attention or tree features. <i>Novelty still to be checked against the literature before it is claimed externally.</i></li>
+      <li><b>An interpretable hidden state.</b> Each mixture becomes a receptor-like pattern tied to odour words, and the distance splits per receptor (w_j·|Δr_j|). So we can say which units, and which odour words, make two mixtures differ.</li>
+      <li><b>A design for small data.</b> The encoder is frozen and the model has about 75k parameters. The receptor heads are also trained on 4,983 single molecules. Mean and sum pooling are special cases, so each step is compared to the baseline by changing one thing.</li>
+      <li><b>Strict evaluation.</b> Choices are made by zero-overlap CV, with pairs sharing no molecule as the main metric. V50 and T46 are scored once. PLAN.md's other contributions (noise ceiling, conformal intervals, active learning) build on O1.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>1 · Architecture</h2>
+    <div class="legend"><span><span class="k fz">frozen</span> pretrained, not trained here</span><span><span class="k ln">learned</span> weights trained on our data</span><span><span class="k cp">computed</span> fixed formula, no weights of its own</span><span><span class="k in">input</span> data</span></div>
+    <figure>
+      <svg viewBox="0 0 1180 340" role="img" aria-label="O1 architecture: molecules pass through a frozen encoder (open-POM or MIST), receptor heads give affinity and efficacy per receptor, competitive binding combines the molecules of a mixture into a receptor pattern, a weighted distance compares two patterns, and an odour-word readout is trained on single molecules." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="12.5" fill="currentColor">
+        <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+        <text x="16" y="22" font-weight="600">mixture A</text>
+        <g fill="none" stroke="currentColor" stroke-opacity=".8"><circle cx="36" cy="55" r="13"/><circle cx="36" cy="95" r="13"/><circle cx="36" cy="135" r="13"/></g>
+        <g text-anchor="middle" font-size="11"><text x="36" y="59">m1</text><text x="36" y="99">m2</text><text x="36" y="139">m3</text></g>
+        <rect x="80" y="36" width="210" height="118" rx="8" fill="var(--enc)" fill-opacity=".12" stroke="var(--enc)" stroke-width="1.5"/>
+        <text x="185" y="60" text-anchor="middle" font-weight="600" fill="var(--enc)">[1] encoder (frozen)</text>
+        <text x="185" y="82" text-anchor="middle">open-POM (graph net) 256-d</text>
+        <text x="185" y="100" text-anchor="middle">or MIST (transformer) 512-d</text>
+        <text x="185" y="122" text-anchor="middle" fill="var(--muted)" font-size="11.5">trained on GS-LF odour labels;</text>
+        <text x="185" y="138" text-anchor="middle" fill="var(--muted)" font-size="11.5">no mixture data</text>
+        <rect x="320" y="36" width="240" height="118" rx="8" fill="var(--rec)" fill-opacity=".12" stroke="var(--rec)" stroke-width="1.5"/>
+        <text x="440" y="60" text-anchor="middle" font-weight="600" fill="var(--rec)">[2] receptor heads, R = 64 (learned)</text>
+        <text x="440" y="84" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12"><tspan fill="var(--o1)" font-weight="600">x(m,j)</tspan> = softplus(<tspan fill="var(--rec)" font-weight="700">W_x</tspan> h(m))</text>
+        <text x="440" y="104" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12"><tspan fill="var(--o1)" font-weight="600">e(m,j)</tspan> = sigmoid(<tspan fill="var(--rec)" font-weight="700">W_e</tspan> h(m))</text>
+        <text x="440" y="126" text-anchor="middle" fill="var(--muted)" font-size="11.5">x: binding ≥ 0</text>
+        <text x="440" y="142" text-anchor="middle" fill="var(--muted)" font-size="11.5">e: activation (efficacy) 0..1</text>
+        <rect x="590" y="36" width="220" height="118" rx="8" fill="var(--o1)" fill-opacity=".14" stroke="var(--o1)" stroke-width="2"/>
+        <text x="700" y="60" text-anchor="middle" font-weight="600" fill="var(--o1)">[3] competitive binding (computed)</text>
+        <text x="700" y="84" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">r_j(A) = Σ_m x(m,j)·e(m,j)</text>
+        <line x1="630" y1="91" x2="770" y2="91" stroke="currentColor"/>
+        <text x="700" y="107" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">1 + Σ_m x(m,j)</text>
+        <text x="700" y="130" text-anchor="middle" fill="var(--muted)" font-size="11.5">one receptor pattern per mixture</text>
+        <text x="700" y="146" text-anchor="middle" fill="var(--muted)" font-size="11.5">r(A) in [0,1)^64</text>
+        <rect x="850" y="96" width="310" height="110" rx="8" fill="var(--rec)" fill-opacity=".06" stroke="var(--rec)" stroke-width="1.5"/>
+        <text x="1005" y="120" text-anchor="middle" font-weight="600" fill="var(--rec)">[4] distance (learned w, α, β)</text>
+        <text x="1005" y="144" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12">d = sigmoid(<tspan fill="var(--rec)" font-weight="700">α</tspan>‖<tspan fill="var(--rec)" font-weight="700">w</tspan>⊙(<tspan fill="var(--o1)" font-weight="600">r(A)</tspan> − <tspan fill="var(--o1)" font-weight="600">r(B)</tspan>)‖ + <tspan fill="var(--rec)" font-weight="700">β</tspan>)</text>
+        <text x="1005" y="166" text-anchor="middle" fill="var(--muted)" font-size="11.5">w ≥ 0: which receptors matter</text>
+        <text x="1005" y="184" text-anchor="middle" fill="var(--muted)" font-size="11.5">β: level; d(A,A) = sigmoid(β)</text>
+        <text x="16" y="232" font-weight="600">mixture B</text>
+        <text x="16" y="252" fill="var(--muted)" font-size="11.5">same [1]–[3], shared weights</text>
+        <rect x="590" y="214" width="220" height="44" rx="8" fill="var(--o1)" fill-opacity=".08" stroke="var(--o1)" stroke-dasharray="4 3"/>
+        <text x="700" y="241" text-anchor="middle" fill="var(--o1)">r(B)</text>
+        <rect x="320" y="258" width="240" height="66" rx="8" fill="var(--rec)" fill-opacity=".06" stroke="var(--rec)" stroke-dasharray="4 3"/>
+        <text x="440" y="281" text-anchor="middle" font-weight="600" fill="var(--rec)">[5] odour readout, learned U</text>
+        <text x="440" y="300" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11.5">p = sigmoid(<tspan fill="var(--rec)" font-weight="700">U</tspan> r), training only</text>
+        <text x="440" y="316" text-anchor="middle" fill="var(--muted)" font-size="11.5">BCE on 4,983 GS-LF single molecules</text>
+        <g stroke="currentColor" marker-end="url(#ar)" fill="none">
+          <line x1="50" y1="55" x2="78" y2="80"/><line x1="50" y1="95" x2="78" y2="95"/><line x1="50" y1="135" x2="78" y2="110"/>
+          <line x1="290" y1="95" x2="318" y2="95"/>
+          <line x1="560" y1="95" x2="588" y2="95"/>
+          <path d="M810 95 H830 V140 H848"/>
+          <path d="M810 236 H830 V170 H848"/>
+          <path d="M650 154 V186 H440 V256" stroke-dasharray="4 3"/>
+          <line x1="260" y1="236" x2="588" y2="236" stroke-dasharray="4 3"/>
+        </g>
+        <text x="460" y="181" fill="var(--muted)" font-size="11">single molecule → odour words</text>
+      </svg>
+      <figcaption>Loss = MSE on the 820 training pairs + λ · BCE on odour words (single molecules through [2]→[3]→[5]) + L1 on x (few receptors per molecule). About 75k trainable parameters with the encoder frozen. λ, R and epochs chosen by zero-overlap CV; V50/T46 scored once at the end.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>2 · Intuition</h2>
+    <div class="grid3">
+      <div class="card"><h3>Receptors, not words</h3><p>The nose reads a mixture through about 400 receptor types, and each molecule binds several of them. O1 compares mixtures in a receptor-like space. The odour readout [5] keeps each unit meaningful, so a difference between two mixtures can be traced back to receptors and then to odour words.</p></div>
+      <div class="card"><h3>Competition is the mixing rule</h3><p>All molecules in a mixture share the denominator 1 + Σx. A receptor that is already occupied does not respond more when another molecule is added. That gives <b>saturation</b>: large mixtures converge, as in "olfactory white". A molecule that binds strongly but activates weakly takes binding sites from the others, which gives <b>suppression</b>.</p></div>
+      <div class="card"><h3>Mean and sum are special cases</h3><p>When binding is weak (Σx ≪ 1), r<sub>j</sub> ≈ Σ x·e, the additive sum. When binding is strong (Σx ≫ 1), r<sub>j</sub> ≈ an affinity-weighted mean of efficacies, close to the mean pooling of our baselines. O1 learns where each receptor sits between the two, and the learned x values show which regime it uses.</p></div>
+    </div>
+    <div class="chartrow" style="margin-top:14px">
+      <figure>
+        <svg viewBox="0 0 520 260" role="img" aria-label="Response of one receptor as identical molecules are added (x = 0.5, e = 0.8). Sum pooling grows without limit, mean pooling stays at 0.4, competitive binding rises and saturates near 0.8." font-family="IBM Plex Sans, system-ui, sans-serif" font-size="11.5" fill="currentColor">
+          <g stroke="var(--line)" stroke-width="1">
+            <line x1="48" y1="224" x2="400" y2="224"/><line x1="48" y1="154.7" x2="400" y2="154.7" stroke-dasharray="2 3"/><line x1="48" y1="85.3" x2="400" y2="85.3" stroke-dasharray="2 3"/><line x1="48" y1="16" x2="400" y2="16" stroke-dasharray="2 3"/>
+          </g>
+          <g fill="var(--muted)" text-anchor="end"><text x="42" y="228">0</text><text x="42" y="158.7">0.4</text><text x="42" y="89.3">0.8</text><text x="42" y="20">1.2</text></g>
+          <g fill="var(--muted)" text-anchor="middle"><text x="48" y="241">1</text><text x="129.2" y="241">10</text><text x="219.5" y="241">20</text><text x="309.7" y="241">30</text><text x="400" y="241">40</text><text x="224" y="257">number of molecules in the mixture</text></g>
+          <polyline fill="none" stroke="var(--s2)" stroke-width="2" points="48.0,154.7 57.0,85.3 66.1,16.0"/>
+          <polyline fill="none" stroke="var(--s1)" stroke-width="2" points="48.0,154.7 400.0,154.7"/>
+          <polyline fill="none" stroke="var(--s3)" stroke-width="2.5" points="48.0,177.8 57.0,154.7 66.1,140.8 75.1,131.6 84.1,125.0 93.1,120.0 102.2,116.1 111.2,113.1 120.2,110.5 129.2,108.4 138.3,106.7 147.3,105.1 156.3,103.8 165.3,102.7 174.4,101.6 183.4,100.7 192.4,99.9 201.4,99.2 210.5,98.5 219.5,97.9 228.5,97.4 237.5,96.9 246.6,96.4 255.6,96.0 264.6,95.6 273.6,95.2 282.7,94.9 291.7,94.6 300.7,94.3 309.7,94.0 318.8,93.7 327.8,93.5 336.8,93.3 345.8,93.0 354.9,92.8 363.9,92.6 372.9,92.4 381.9,92.3 391.0,92.1 400.0,91.9"/>
+          <text x="72" y="24">sum: keeps growing</text>
+          <text x="406" y="158.7">mean: flat</text>
+          <text x="406" y="95.9">competition:</text><text x="406" y="110">saturates at e</text>
+          <g fill="transparent" stroke="none">
+            <circle cx="48" cy="177.8" r="9"><title>competition, 1 molecule: 0.27</title></circle>
+            <circle cx="129.2" cy="108.4" r="9"><title>competition, 10 molecules: 0.67</title></circle>
+            <circle cx="400" cy="91.9" r="9"><title>competition, 40 molecules: 0.76</title></circle>
+            <circle cx="219.5" cy="154.7" r="9"><title>mean: 0.40 for any size</title></circle>
+            <circle cx="57" cy="85.3" r="9"><title>sum, 2 molecules: 0.80</title></circle>
+          </g>
+        </svg>
+        <figcaption>One receptor, identical molecules added one by one (x = 0.5, e = 0.8). Illustration, not data.</figcaption>
+      </figure>
+      <div class="card">
+        <h3>Worked example: suppression</h3>
+        <p>Receptor R1, molecule m1 alone: x = 2, e = 1 → r = 2 / 3 = <b>0.67</b>.</p>
+        <p>Mixture {m1, m2}, with m2: x = 4, e = 0.1 (binds strongly, activates weakly): r = (2 + 0.4) / (1 + 6) = <b>0.34</b>.</p>
+        <p>m2 halves the response even though it barely activates the receptor itself. A mean or sum of m1 and m2 cannot produce this; attention can learn something similar, but without the physical constraint.</p>
+        <p class="note">Assumption: equal concentrations, because the training mixtures are intensity-matched and no concentrations are given. x then means "binding strength at that concentration".</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Part by part: O1 vs POMMix vs D2Smell</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>part</th><th>O1</th><th>POMMix (released config)</th><th>D2Smell (released code)</th></tr></thead>
+        <tbody>
+          <tr><td>encoder</td><td>open-POM or MIST, <b>frozen</b></td><td>own POM graph net (196-d, depth 4), pretrained on GS-LF, <b>fine-tuned</b> (lr 1e-5)</td><td>none; hand-built features</td></tr>
+          <tr><td>per molecule</td><td>affinity + efficacy for R receptors</td><td>196-d embedding</td><td>presence in the mixture + 21 single-molecule percepts (XGBoost on Keller ratings) + 25 notes from a pair graph network trained on ~167k GoodScents blender pairs</td></tr>
+          <tr><td>hidden layer</td><td>receptor pattern r ∈ [0,1)^R, physical form</td><td>96-d mixture vector after 1 self-attention layer (8 heads, sigmoidal)</td><td>none</td></tr>
+          <tr><td>mixing</td><td>competitive binding</td><td>attention between molecules, then PNA pooling</td><td>mixture-level features (quantile-transformed ×2)</td></tr>
+          <tr><td>distance</td><td>sigmoid(α‖w⊙Δr‖ + β), w ≥ 0</td><td>scaled cosine, hardtanh to [0,1]</td><td>trees predict the label from both mixtures' features + (f₁−f₂)²</td></tr>
+          <tr><td>symmetry, d(A,A)</td><td>by construction</td><td>by construction</td><td>not by construction; swap augmentation</td></tr>
+          <tr><td><b>main loss</b></td><td><b>MSE</b> on the 820 pairs (matches the RMSE score; MSE vs 1−R² chosen by CV)</td><td><b>MAE</b> (L1) on 865 pairs (Huber δ = 0.15 is the default option)</td><td><b>squared error</b> (XGBoost <span class="m">reg:squarederror</span>)</td></tr>
+          <tr><td><b>auxiliary loss</b></td><td><b>λ·BCE on odour words</b> for 4,983 GS-LF molecules, trained <b>jointly</b>, so the hidden layer stays odour-meaningful</td><td>none during mixture training; BCE on GS-LF only in the separate pretraining step, and fine-tuning can then drift away from it</td><td>none</td></tr>
+          <tr><td><b>regularisation</b></td><td>L1 on x (sparse binding); weight decay; bounded a, e, r; frozen encoder</td><td>dropout 0.1; weight decay 0; early stopping (patience 100)</td><td>tree hyperparameters; ensemble of 10 seeds; data augmentation</td></tr>
+          <tr><td><b>model selection</b></td><td>zero-overlap CV (whole mixtures held out); main metric on pairs sharing no molecule</td><td>random split of pairs; early stopping on validation Pearson</td><td>Optuna, 20 trials, by Pearson on the 46 leaderboard pairs (also in its training file)</td></tr>
+          <tr><td>trained parameters</td><td>~75k</td><td>1.64M (graph net + mixture net)</td><td>boosted trees</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">POMMix: <code>scripts/pommix/results/random_cv/model/hparams_*.json</code>, <code>src/chemix/train.py</code>. D2Smell: <code>olfboost_repo/train/mixture_regressor_ensemble.py</code>. O1: PLAN.md design, not yet trained.</p>
+  </section>
+
+  <section>
+    <h2>4 · Other models, in brief</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>model</th><th>per molecule</th><th>how molecules combine</th><th>distance</th><th>trained on mixture pairs</th></tr></thead>
+        <tbody>
+          <tr class="o1"><td>O1</td><td>open-POM or MIST vector → affinity + efficacy for 64 latent receptors</td><td><b>competitive binding</b> per receptor (saturation, suppression)</td><td>weighted Euclidean on receptor patterns, w ≥ 0, sigmoid</td><td>heads + distance, ~75k params; encoder frozen; GS-LF readout loss</td></tr>
+          <tr><td>open-POM baseline</td><td>open-POM odour-word probabilities, quantile per word</td><td>mean</td><td>Euclidean after length 1, then a line</td><td>2 numbers</td></tr>
+          <tr><td>D2Smell (1st)</td><td>molecule identity vectors + 21 single-molecule percepts + 25 pair-network notes (trained on ~167k GoodScents pairs), quantile ×2</td><td>mean / presence vectors; both mixtures given side by side</td><td>none explicit: boosted trees predict the label from pair features, (f₁−f₂)² among them</td><td>trees on 780 measured + 19,798 synthetic pairs; its pair network is trained separately on GoodScents blends; symmetry only by swap augmentation</td></tr>
+          <tr><td>PL21</td><td>21 predicted perceptual ratings (Dragon → models)</td><td>mean</td><td>positive Lasso on (U−V)² per rating = weighted squared Euclidean</td><td>≤ 21 weights, on 60 Bushdid pairs</td></tr>
+          <tr><td>POMMix</td><td>own POM graph net (GS-LF pretrained), fine-tuned</td><td>1 self-attention layer over molecules, then PNA pooling</td><td>scaled cosine, hardtanh</td><td>end to end, 1.64M params, 865 pairs</td></tr>
+          <tr><td>MIST mixture model</td><td>MIST CLS embedding, encoder trainable</td><td>softmax-weighted sum (MLP scores each molecule)</td><td>scaled cosine</td><td>end to end; weights not released</td></tr>
+          <tr><td>ChemSenSim Lab</td><td>385 predicted receptor activations (M2OR model) + 256-d POM + experiment type + size ratio</td><td>FC + attention over molecules</td><td>Siamese MLP 1024-512-256, Manhattan distance, then SVR</td><td>MLP + SVR on training pairs</td></tr>
+          <tr><td>Singh et al.</td><td>measured mouse receptor dose curves</td><td>competitive binding</td><td>— (receptor responses only)</td><td>no perception model</td></tr>
+          <tr><td>Reddy et al., eLife 2018</td><td>model receptors</td><td>competitive binding with affinity/efficacy → normalisation</td><td>— (theory)</td><td>no structure → receptor model</td></tr>
+          <tr><td>Guan 2026*</td><td>docking scores to AlphaFold3 receptor models</td><td>min over components (winner-take-all)</td><td>— (LightGBM on DREAM descriptors)</td><td>—</td></tr>
+          <tr><td>Wang 2026*</td><td>104 receptors from receptor databases</td><td>attention over receptors + concentration-weighted linear sum</td><td>similarity on own 112-pair set</td><td>own essential-oil data</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">* As summarised in PLAN.md; not yet checked against the papers. ChemSenSim is the only DREAM model that uses receptor information, and it uses it as input features. In O1 the receptor layer is the mixing mechanism itself.</p>
+  </section>
+
+  <section>
+    <h2>5 · Distance functions compared</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>distance</th><th>used by</th><th>symmetric</th><th>d(A,A) fixed</th><th>learned parts</th><th>note</th></tr></thead>
+        <tbody>
+          <tr class="o1"><td>sigmoid(α‖w⊙(r_A−r_B)‖ + β), w ≥ 0</td><td>O1</td><td class="y">yes</td><td class="y">yes</td><td>α, β, one weight per receptor</td><td>non-negative weights keep "more difference → more distant"; per-receptor normalisation is a CV option</td></tr>
+          <tr><td>Euclidean on length-1 quantile profiles, then a line</td><td>open-POM baseline, B1a</td><td class="y">yes</td><td class="y">yes</td><td>a, c</td><td>every word weighted equally</td></tr>
+          <tr><td>cosine, then a line</td><td>B1</td><td class="y">yes</td><td class="y">yes</td><td>a, c</td><td>ignores magnitude</td></tr>
+          <tr><td>weighted squared Euclidean, w ≥ 0 (Lasso)</td><td>PL21</td><td class="y">yes</td><td class="y">yes</td><td>one weight per rating</td><td>closest to O1's distance head</td></tr>
+          <tr><td>scaled cosine, clipped to [0,1]</td><td>POMMix, MIST mixture</td><td class="y">yes</td><td class="y">yes</td><td>scale, offset</td><td>fixed metric; the representation is learned instead</td></tr>
+          <tr><td>Manhattan on Siamese embeddings, then SVR</td><td>ChemSenSim Lab</td><td class="y">yes</td><td class="n">not after SVR</td><td>MLP + SVR</td><td>metric learned on top of the embedding</td></tr>
+          <tr><td>boosted trees on pair features</td><td>D2Smell</td><td class="n">only by augmentation</td><td class="n">no</td><td>whole model</td><td>not a metric; learns the level per region well, which helps RMSE</td></tr>
+          <tr><td>angle between Dragon vectors</td><td>Snitz et al.</td><td class="y">yes</td><td class="y">yes</td><td>a, c</td><td>fixed descriptors</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>6 · Build order</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>step</th><th>what changes</th><th>params</th><th>question</th></tr></thead>
+        <tbody>
+          <tr><td>O1.0</td><td>competition on the frozen odour words: one receptor per word, activation e = the molecule's word score, binding s_w learned per word (<a href="#o10">O1.0 section</a>)</td><td>278</td><td>Does the mixing rule alone beat mean pooling?</td></tr>
+          <tr><td>O1</td><td>full [1]–[5], encoder frozen, R = 64, run with open-POM and with MIST</td><td>~75k</td><td>Does a learned receptor layer help?</td></tr>
+          <tr><td>later</td><td>efficacy fixed vs learned; R = 16 / 64 / 400; M2OR receptor labels; attention over receptors; encoder fine-tuning</td><td></td><td>ablations from PLAN.md</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">All choices are made by zero-overlap CV on the 820 training pairs, reported on all pairs and on pairs sharing no molecule. Design source: PLAN.md, "Bio-inspired hidden layer".</p>
+  </section>
+</main>
+</body>
+</html>
